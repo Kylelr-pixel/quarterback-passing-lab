@@ -1,21 +1,574 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quarterback Passing Lab</title><style>body{margin:0;background:#101b25;color:#eef5ff;font:16px system-ui}main{max-width:1000px;margin:auto;padding:16px}h1{font-size:24px}canvas{width:100%;background:#206044;border-radius:12px;touch-action:none}button,input{font:inherit}button{background:#efb848;border:0;border-radius:6px;padding:10px 18px;cursor:pointer}.bar{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:12px 0}.note{color:#bdd0de;font-size:14px}#status{min-height:26px}label{display:flex;align-items:center;gap:8px}</style></head><body><main><h1>Quarterback Passing Lab</h1><p>Aim at a receiver's future position. Choose power, then click/tap the field to throw.</p><div class="bar"><button id="start">Start / restart round</button><label>Power <input id="power" type="range" min="10" max="32" value="22"><span id="pv">22 m/s</span></label><label><input id="def" type="checkbox" checked>Defenders</label></div><div class="bar" id="score"></div><div id="status">Press Start. Complete as many passes as possible in 60 seconds.</div><canvas id="field" width="960" height="650"></canvas><p class="note">Original prototype. Top-down field; dashed preview shows intended landing point, not a guaranteed completion. Throws follow a simplified gravity-driven arc. Catch checks use proximity, ball height, and relative speed. No vendor assets, sensor integration, or exact vendor scoring.</p></main><script>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Gridiron Passing Challenge</title>
+<style>
+*{box-sizing:border-box;user-select:none;-webkit-user-select:none;margin:0;padding:0}
+body{background:#0a0e14;color:#f0f6fc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden;touch-action:none;height:100vh;display:flex;flex-direction:column}
+#hud{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:linear-gradient(180deg,rgba(10,14,20,0.92) 0%,rgba(10,14,20,0) 100%);z-index:20;font-size:14px;font-weight:700;letter-spacing:0.5px}
+.hud-box{background:rgba(20,30,45,0.85);border:1px solid rgba(88,166,255,0.3);border-radius:8px;padding:6px 12px;display:flex;flex-direction:column;align-items:center}
+.hud-label{font-size:10px;color:#8b949e;text-transform:uppercase}
+.hud-val{font-size:18px;color:#ffdf78;font-weight:800}
+#mode-toggle{position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:6px;background:rgba(15,23,42,0.85);padding:4px;border-radius:24px;border:1px solid rgba(255,255,255,0.15)}
+.mode-btn{background:transparent;border:0;color:#94a3b8;padding:6px 14px;border-radius:18px;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.2s}
+.mode-btn.active{background:#38bdf8;color:#0f172a;box-shadow:0 0 12px rgba(56,189,248,0.5)}
+#banner{position:absolute;top:38%;left:50%;transform:translate(-50%,-50%);z-index:30;text-align:center;pointer-events:none;transition:opacity 0.3s;opacity:0}
+#banner-text{font-size:32px;font-weight:900;text-shadow:0 0 20px #000,0 4px 8px #000;letter-spacing:1px}
+#wrist-coach{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:20;background:rgba(15,23,42,0.92);border:2px solid #38bdf8;border-radius:12px;padding:8px 14px;width:90%;max-width:380px;box-shadow:0 8px 24px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:4px}
+.coach-header{display:flex;justify-content:space-between;font-size:11px;color:#38bdf8;font-weight:800;text-transform:uppercase;letter-spacing:0.8px}
+.route-diagram{position:relative;height:36px;background:#1e293b;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.1)}
+.catch-marker{position:absolute;top:0;bottom:0;width:32%;background:rgba(34,197,94,0.35);border-left:2px solid #22c55e;border-right:2px solid #22c55e}
+.receiver-pip{position:absolute;top:50%;width:14px;height:14px;border-radius:50%;background:#e0f2fe;border:2px solid #0284c7;transform:translate(-50%,-50%);box-shadow:0 0 8px #38bdf8;transition:left 0.05s linear}
+.coach-sub{display:flex;justify-content:space-between;font-size:10px;color:#94a3b8}
+#game-canvas{flex:1;width:100%;height:100%;display:block}
+#launch-prompt{position:absolute;top:60%;left:50%;transform:translate(-50%,-50%);color:#f8fafc;font-size:16px;font-weight:800;letter-spacing:1px;text-transform:uppercase;pointer-events:none;z-index:15;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:0.9;transform:translate(-50%,-50%) scale(1)}50%{opacity:0.4;transform:translate(-50%,-50%) scale(0.96)}}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="hud-box"><span class="hud-label">Score</span><span class="hud-val" id="score-val">0</span></div>
+  <div class="hud-box"><span class="hud-label">Throw</span><span class="hud-val" id="throw-val">1 / 5</span></div>
+  <div class="hud-box"><span class="hud-label">Time</span><span class="hud-val" id="timer-val">15</span></div>
+</div>
+
+<div id="mode-toggle">
+  <button class="mode-btn active" id="btn-receiver">Moving Receiver</button>
+  <button class="mode-btn" id="btn-targets">Target Bulls</button>
+  <button class="mode-btn" id="btn-fieldgoal">Field Goal</button>
+</div>
+
+<div id="banner"><div id="banner-text">TOUCHDOWN!</div></div>
+<div id="launch-prompt">Swipe up to throw</div>
+
+<div id="wrist-coach">
+  <div class="coach-header"><span>Wrist Coach · Play 12</span><span id="coach-status" style="color:#22c55e">READY</span></div>
+  <div class="route-diagram" id="route-box">
+    <div class="catch-marker" id="catch-zone" style="left:45%"></div>
+    <div class="receiver-pip" id="receiver-pip" style="left:10%"></div>
+  </div>
+  <div class="coach-sub"><span>Route: Slant Right (18 yds)</span><span>Green: Catch Window</span></div>
+</div>
+
+<canvas id="game-canvas"></canvas>
+
+<script>
 'use strict';
-const canvas=document.querySelector('#field'),ctx=canvas.getContext('2d'),power=document.querySelector('#power'),status=document.querySelector('#status'),score=document.querySelector('#score');
-const W=960,H=650,scale=14,g=9.81;
-let active=false,remaining=60,points=0,attempts=0,completions=0,interceptions=0,ball=null,aim={x:0,y:23},receivers=[],defenders=[],last=0,cooldown=0;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function screen(x,y){return{x:W/2+x*scale,y:H-65-y*scale}}
-function world(event){const r=canvas.getBoundingClientRect();return{x:clamp(((event.clientX-r.left)*W/r.width-W/2)/scale,-28,28),y:clamp((H-65-(event.clientY-r.top)*H/r.height)/scale,3,37)}}
-function populate(){receivers=[{x:-15,y:12,vx:3.2,vy:0,color:'#58baff',name:'A'},{x:8,y:23,vx:-3.8,vy:0,color:'#58baff',name:'B'},{x:-6,y:32,vx:4.4,vy:0,color:'#58baff',name:'C'}];defenders=[{x:-12,y:17,vx:-2.7,vy:0,color:'#fa7b74',name:'D'},{x:12,y:28,vx:3,vy:0,color:'#fa7b74',name:'D'}]}
-function restart(){active=true;remaining=60;points=attempts=completions=interceptions=0;ball=null;cooldown=0;populate();status.textContent='Round started. Lead your receiver!'}
-function flight(){const d=Math.hypot(aim.x,aim.y),v=Number(power.value),s=g*d/(v*v);if(s>1)return null;const angle=Math.asin(s)/2,t=2*v*Math.sin(angle)/g;return{t,vx:aim.x/t,vy:aim.y/t,vz:v*Math.sin(angle)}}
-function throwBall(){if(!active||ball||cooldown>0)return;const f=flight();attempts++;if(!f){status.textContent='Out of range for this power. Increase power or aim closer.';cooldown=.4;return}ball={x:0,y:0,z:1.7,vx:f.vx,vy:f.vy,vz:f.vz,t:0};status.textContent='Pass in flight…'}
-function finish(message,kind){if(kind==='catch'){completions++;points+=Math.round(100+ball.y*10)}if(kind==='intercept'){interceptions++;points=Math.max(0,points-50)}status.textContent=message;ball=null;cooldown=.65}
-function move(a,dt){a.x+=a.vx*dt;if(a.x>24){a.x=24;a.vx=-Math.abs(a.vx)}if(a.x< -24){a.x=-24;a.vx=Math.abs(a.vx)}}
-function update(dt){if(!active)return;remaining=Math.max(0,remaining-dt);if(remaining===0){active=false;ball=null;status.textContent=`Round over: ${completions}/${attempts} completed, ${interceptions} interceptions, ${points} points.`;return}cooldown=Math.max(0,cooldown-dt);receivers.forEach(a=>move(a,dt));if(document.querySelector('#def').checked)defenders.forEach(a=>move(a,dt));if(ball){ball.t+=dt;ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;ball.z+=ball.vz*dt-.5*g*dt*dt;ball.vz-=g*dt;const people=document.querySelector('#def').checked?[...defenders,...receivers]:receivers;for(const a of people){const speed=Math.hypot(ball.vx-a.vx,ball.vy-a.vy);if(ball.vz<0&&ball.z>.35&&ball.z<2.7&&Math.hypot(ball.x-a.x,ball.y-a.y)<1.35&&speed<34){finish(a.name==='D'?'Intercepted! −50 points.':`Receiver ${a.name}: completed pass!`,a.name==='D'?'intercept':'catch');break}}if(ball&&(ball.z<=0||Math.abs(ball.x)>30||ball.y>40))finish('Incomplete pass. Adjust aim, power, or timing.','miss')}}
-function circle(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill()}
-function draw(){ctx.clearRect(0,0,W,H);for(let y=0;y<=40;y+=5){const p=screen(0,y);ctx.strokeStyle=y%10===0?'#c7e3d4':'#659b7c';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(55,p.y);ctx.lineTo(W-55,p.y);ctx.stroke();ctx.fillStyle='#d9ebe0';ctx.font='13px system-ui';ctx.fillText(`${y} m`,12,p.y+5)}ctx.strokeStyle='#d1e8db';ctx.strokeRect(55,25,W-110,H-90);for(const a of [...receivers,...(document.querySelector('#def').checked?defenders:[])]){const p=screen(a.x,a.y);circle(p.x,p.y,13,a.color);ctx.fillStyle='#12202b';ctx.font='bold 14px system-ui';ctx.textAlign='center';ctx.fillText(a.name,p.x,p.y+5);ctx.strokeStyle=a.color;ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x+a.vx*10,p.y);ctx.stroke()}const q=screen(0,0);circle(q.x,q.y,15,'#f4bd46');ctx.fillStyle='#14202b';ctx.fillText('QB',q.x,q.y+5);const target=screen(aim.x,aim.y),f=flight();ctx.setLineDash([6,6]);ctx.strokeStyle=f?'#ffdf78':'#ff8282';ctx.beginPath();ctx.moveTo(q.x,q.y);ctx.lineTo(target.x,target.y);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(target.x,target.y,17,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#fff';ctx.font='13px system-ui';ctx.fillText(f?`Flight ~${f.t.toFixed(2)} s`:'Out of range',target.x,Math.max(18,target.y-24));if(ball){const p=screen(ball.x,ball.y);circle(p.x,p.y,6,'#122b2080');ctx.save();ctx.translate(p.x,p.y-ball.z*10);ctx.rotate(-.7);ctx.fillStyle='#ad683b';ctx.beginPath();ctx.ellipse(0,0,9,5,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='white';ctx.beginPath();ctx.moveTo(-4,0);ctx.lineTo(4,0);ctx.stroke();ctx.restore()}ctx.textAlign='left';score.textContent=`Time: ${Math.ceil(remaining)} s   |   Points: ${points}   |   Completed: ${completions}/${attempts}   |   Interceptions: ${interceptions}`}
-function loop(t){let dt=last?Math.min((t-last)/1000,.05):0;last=t;while(dt>0){const step=Math.min(dt,1/120);update(step);dt-=step}draw();requestAnimationFrame(loop)}
-canvas.addEventListener('pointermove',e=>{aim=world(e)});canvas.addEventListener('pointerdown',e=>{e.preventDefault();aim=world(e);throwBall()});document.querySelector('#start').onclick=restart;power.oninput=()=>document.querySelector('#pv').textContent=power.value+' m/s';populate();requestAnimationFrame(loop);
-</script></body></html>
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+
+let gameMode = 'receiver';
+let score = 0, attempt = 1, maxAttempts = 5, roundTimer = 15;
+let roundActive = true, lastTime = performance.now();
+
+document.getElementById('btn-receiver').onclick = () => setMode('receiver');
+document.getElementById('btn-targets').onclick = () => setMode('targets');
+document.getElementById('btn-fieldgoal').onclick = () => setMode('fieldgoal');
+
+function setMode(mode) {
+  gameMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + mode).classList.add('active');
+  const coach = document.getElementById('wrist-coach');
+  const prompt = document.getElementById('launch-prompt');
+  if (mode === 'receiver') {
+    coach.style.display = 'flex';
+    prompt.textContent = 'Swipe up to throw';
+  } else if (mode === 'targets') {
+    coach.style.display = 'none';
+    prompt.textContent = 'Swipe towards target';
+  } else {
+    coach.style.display = 'none';
+    prompt.textContent = 'Swipe up to kick';
+  }
+  resetRound();
+}
+
+const Cam = { x: 0, y: 1.8, z: 0, fov: 280 };
+function project(x, y, z) {
+  if (z <= 0.1) return null;
+  const f = Cam.fov / z;
+  return {
+    x: W / 2 + (x - Cam.x) * f,
+    y: H * 0.58 - (y - Cam.y) * f,
+    scale: f
+  };
+}
+
+let receiver = {
+  x: -8, y: 0, z: 20,
+  vx: 3.8, vz: 0,
+  routeTime: 0,
+  routeDuration: 4.5,
+  catchZoneStart: 1.8,
+  catchZoneEnd: 3.2,
+  celebrating: false
+};
+
+let targets = [
+  { x: -5.5, y: 3.2, z: 18, radius: 1.4, points: 3, label: '3' },
+  { x: 5.5, y: 3.2, z: 18, radius: 1.4, points: 3, label: '3' },
+  { x: 0, y: 2.2, z: 14, radius: 1.2, points: 5, label: '5' }
+];
+
+let ball = {
+  active: false,
+  x: 0, y: 1.6, z: 0.5,
+  vx: 0, vy: 0, vz: 0,
+  spin: 0
+};
+
+let touchStart = null;
+window.addEventListener('touchstart', e => {
+  if (e.touches.length > 0) {
+    const t = e.touches[0];
+    touchStart = { x: t.clientX, y: t.clientY, time: performance.now() };
+  }
+}, { passive: false });
+
+window.addEventListener('touchend', e => {
+  if (!touchStart || ball.active || !roundActive) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStart.x;
+  const dy = t.clientY - touchStart.y;
+  const dt = (performance.now() - touchStart.time) / 1000;
+  
+  if (dy < -30 && dt < 0.6) {
+    launchThrow(dx, dy, dt);
+  }
+  touchStart = null;
+});
+
+let mouseDown = null;
+window.addEventListener('mousedown', e => {
+  mouseDown = { x: e.clientX, y: e.clientY, time: performance.now() };
+});
+window.addEventListener('mouseup', e => {
+  if (!mouseDown || ball.active || !roundActive) return;
+  const dx = e.clientX - mouseDown.x;
+  const dy = e.clientY - mouseDown.y;
+  const dt = (performance.now() - mouseDown.time) / 1000;
+  if (dy < -20) {
+    launchThrow(dx, dy, dt);
+  }
+  mouseDown = null;
+});
+
+function launchThrow(dx, dy, dt) {
+  ball.active = true;
+  ball.x = 0; ball.y = 1.6; ball.z = 0.5;
+  const speedScale = Math.min(38, Math.max(16, (-dy / dt) * 0.045));
+  
+  if (gameMode === 'fieldgoal') {
+    ball.vz = speedScale * 0.95;
+    ball.vy = speedScale * 0.55;
+    ball.vx = (dx / W) * 20;
+  } else {
+    ball.vz = speedScale * 0.85;
+    ball.vy = speedScale * 0.35;
+    ball.vx = (dx / W) * 24;
+  }
+  document.getElementById('launch-prompt').style.display = 'none';
+}
+
+function showBanner(text, color) {
+  const b = document.getElementById('banner');
+  const bt = document.getElementById('banner-text');
+  bt.textContent = text;
+  bt.style.color = color || '#38bdf8';
+  b.style.opacity = '1';
+  setTimeout(() => { b.style.opacity = '0'; }, 1600);
+}
+
+function resetRound() {
+  ball.active = false;
+  receiver.routeTime = 0;
+  receiver.x = -8;
+  receiver.z = 20;
+  receiver.celebrating = false;
+  roundTimer = 15;
+  roundActive = true;
+  document.getElementById('launch-prompt').style.display = 'block';
+  updateHud();
+}
+
+function updateHud() {
+  document.getElementById('score-val').textContent = score;
+  document.getElementById('throw-val').textContent = attempt + ' / ' + maxAttempts;
+  document.getElementById('timer-val').textContent = Math.ceil(roundTimer);
+}
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function update(dt) {
+  if (!roundActive) return;
+  roundTimer = Math.max(0, roundTimer - dt);
+  if (roundTimer === 0 && !ball.active) {
+    nextAttempt(false, 'TIME EXPIRED');
+  }
+
+  if (gameMode === 'receiver') {
+    receiver.routeTime += dt;
+    if (receiver.routeTime > receiver.routeDuration) {
+      receiver.routeTime = 0;
+    }
+    const tNorm = receiver.routeTime / receiver.routeDuration;
+    receiver.x = -9 + tNorm * 18;
+    receiver.z = 18 + Math.sin(tNorm * Math.PI) * 4;
+
+    const pip = document.getElementById('receiver-pip');
+    const coachStatus = document.getElementById('coach-status');
+    pip.style.left = (tNorm * 100) + '%';
+    const inWindow = receiver.routeTime >= receiver.catchZoneStart && receiver.routeTime <= receiver.catchZoneEnd;
+    if (inWindow) {
+      coachStatus.textContent = 'READY TO CATCH';
+      coachStatus.style.color = '#22c55e';
+    } else {
+      coachStatus.textContent = 'RUNNING ROUTE';
+      coachStatus.style.color = '#38bdf8';
+    }
+  }
+
+  if (ball.active) {
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    ball.z += ball.vz * dt;
+    ball.vy -= 9.81 * dt;
+    ball.spin += 15 * dt;
+
+    if (gameMode === 'receiver') {
+      const dist = Math.hypot(ball.x - receiver.x, ball.y - 1.8, ball.z - receiver.z);
+      const inWindow = receiver.routeTime >= receiver.catchZoneStart && receiver.routeTime <= receiver.catchZoneEnd;
+      if (dist < 1.8 && ball.y > 0.4 && ball.y < 3.2) {
+        if (inWindow) {
+          score += 6;
+          showBanner('TOUCHDOWN! +6', '#4ade80');
+          receiver.celebrating = true;
+          ball.active = false;
+          setTimeout(() => nextAttempt(true), 1200);
+        } else {
+          showBanner('DEFENDED PASS', '#f87171');
+          ball.active = false;
+          setTimeout(() => nextAttempt(false), 1200);
+        }
+      }
+    } else if (gameMode === 'targets') {
+      for (let tgt of targets) {
+        const dist = Math.hypot(ball.x - tgt.x, ball.y - tgt.y, ball.z - tgt.z);
+        if (dist < tgt.radius) {
+          score += tgt.points;
+          showBanner('HIT! +' + tgt.points + ' PTS', '#fde047');
+          ball.active = false;
+          setTimeout(() => nextAttempt(true), 1200);
+          break;
+        }
+      }
+    } else if (gameMode === 'fieldgoal') {
+      if (ball.z >= 35) {
+        if (ball.x >= -3.5 && ball.x <= 3.5 && ball.y >= 3.0) {
+          score += 3;
+          showBanner('FIELD GOAL GOOD! +3', '#38bdf8');
+        } else {
+          showBanner('NO GOOD - WIDE', '#f87171');
+        }
+        ball.active = false;
+        setTimeout(() => nextAttempt(true), 1200);
+      }
+    }
+
+    if (ball.y <= 0 || ball.z > 50) {
+      if (ball.active) {
+        showBanner('INCOMPLETE', '#94a3b8');
+        ball.active = false;
+        setTimeout(() => nextAttempt(false), 1200);
+      }
+    }
+  }
+
+  updateHud();
+}
+
+function nextAttempt(success, reason) {
+  if (attempt >= maxAttempts) {
+    roundActive = false;
+    showBanner('FINAL SCORE: ' + score, '#38bdf8');
+    setTimeout(() => {
+      attempt = 1;
+      score = 0;
+      resetRound();
+    }, 3000);
+  } else {
+    attempt++;
+    resetRound();
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  const grad = ctx.createLinearGradient(0, 0, 0, H * 0.6);
+  grad.addColorStop(0, '#0c1e30');
+  grad.addColorStop(1, '#1b3a57');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H * 0.6);
+
+  drawStadium();
+  drawField();
+
+  if (gameMode === 'receiver') {
+    drawReceiver();
+  } else if (gameMode === 'targets') {
+    drawTargets();
+  } else if (gameMode === 'fieldgoal') {
+    drawGoalposts();
+  }
+
+  if (ball.active) {
+    drawBall();
+  }
+}
+
+function drawStadium() {
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(0, H * 0.15, W, H * 0.12);
+  ctx.fillStyle = '#ffdf78';
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath();
+    ctx.arc((W / 9) * (i + 1), H * 0.18, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, H * 0.27, W, 22);
+  ctx.fillStyle = '#38bdf8';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('FULL STADIUM SIMULATOR · FIRST DOWN · CHAMPIONSHIP LAB', W / 2, H * 0.27 + 15);
+}
+
+function drawField() {
+  const pCloseL = project(-30, 0, 1);
+  const pCloseR = project(30, 0, 1);
+  const pFarL = project(-30, 0, 50);
+  const pFarR = project(30, 0, 50);
+
+  if (!pCloseL || !pFarL) return;
+
+  const turfGrad = ctx.createLinearGradient(0, pFarL.y, 0, H);
+  turfGrad.addColorStop(0, '#154a2a');
+  turfGrad.addColorStop(1, '#1e7340');
+  ctx.fillStyle = turfGrad;
+
+  ctx.beginPath();
+  ctx.moveTo(pFarL.x, pFarL.y);
+  ctx.lineTo(pFarR.x, pFarR.y);
+  ctx.lineTo(pCloseR.x, H);
+  ctx.lineTo(pCloseL.x, H);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 2;
+  for (let z = 5; z <= 45; z += 5) {
+    const l1 = project(-18, 0, z);
+    const l2 = project(18, 0, z);
+    if (l1 && l2) {
+      ctx.beginPath();
+      ctx.moveTo(l1.x, l1.y);
+      ctx.lineTo(l2.x, l2.y);
+      ctx.stroke();
+
+      if (z % 10 === 0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.font = 'bold ' + Math.max(10, Math.round(l1.scale * 0.8)) + 'px sans-serif';
+        ctx.fillText(z.toString(), l1.x + 20, l1.y - 2);
+        ctx.fillText(z.toString(), l2.x - 20, l2.y - 2);
+      }
+    }
+  }
+
+  if (gameMode === 'receiver') {
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    for (let t = 0; t <= 1; t += 0.05) {
+      const rx = -9 + t * 18;
+      const rz = 18 + Math.sin(t * Math.PI) * 4;
+      const pt = project(rx, 0.05, rz);
+      if (pt) {
+        if (t === 0) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawReceiver() {
+  const p = project(receiver.x, 0, receiver.z);
+  if (!p) return;
+  const s = p.scale;
+
+  const inWindow = receiver.routeTime >= receiver.catchZoneStart && receiver.routeTime <= receiver.catchZoneEnd;
+  const boxP = project(receiver.x, 1.8, receiver.z);
+  if (boxP) {
+    ctx.strokeStyle = inWindow ? 'rgba(34,197,94,0.85)' : 'rgba(56,189,248,0.7)';
+    ctx.fillStyle = inWindow ? 'rgba(34,197,94,0.18)' : 'rgba(56,189,248,0.12)';
+    ctx.lineWidth = 3;
+    const bw = s * 2.2, bh = s * 3.6;
+    ctx.strokeRect(boxP.x - bw / 2, boxP.y - bh / 2, bw, bh);
+    ctx.fillRect(boxP.x - bw / 2, boxP.y - bh / 2, bw, bh);
+  }
+
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(p.x - s * 0.35, p.y - s * 1.6, s * 0.25, s * 1.6);
+  ctx.fillRect(p.x + s * 0.1, p.y - s * 1.6, s * 0.25, s * 1.6);
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(p.x - s * 0.55, p.y - s * 3.1, s * 1.1, s * 1.6);
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold ' + Math.round(s * 0.8) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('87', p.x, p.y - s * 2.0);
+  ctx.fillStyle = '#334155';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y - s * 3.5, s * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = Math.max(2, s * 0.22);
+  ctx.beginPath();
+  ctx.moveTo(p.x - s * 0.5, p.y - s * 2.7);
+  ctx.lineTo(p.x - s * 0.9, p.y - (receiver.celebrating ? s * 3.6 : s * 2.9));
+  ctx.moveTo(p.x + s * 0.5, p.y - s * 2.7);
+  ctx.lineTo(p.x + s * 0.9, p.y - (receiver.celebrating ? s * 3.6 : s * 2.9));
+  ctx.stroke();
+}
+
+function drawTargets() {
+  for (let tgt of targets) {
+    const p = project(tgt.x, tgt.y, tgt.z);
+    if (!p) continue;
+    const r = tgt.radius * p.scale;
+
+    const baseP = project(tgt.x, 0, tgt.z);
+    if (baseP) {
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(baseP.x, baseP.y);
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#0284c7';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r * 0.65, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r * 0.35, 0, Math.PI * 2);
+    ctx.fillStyle = '#ef4444';
+    ctx.fill();
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(p.x - 16, p.y + r + 4, 32, 18);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.strokeRect(p.x - 16, p.y + r + 4, 32, 18);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(tgt.label, p.x, p.y + r + 17);
+  }
+}
+
+function drawGoalposts() {
+  const pBase = project(0, 0, 35);
+  const pCross = project(0, 3.0, 35);
+  const pLeft = project(-3.5, 9.0, 35);
+  const pRight = project(3.5, 9.0, 35);
+  const pCrossL = project(-3.5, 3.0, 35);
+  const pCrossR = project(3.5, 3.0, 35);
+
+  if (!pBase || !pCross || !pLeft || !pRight) return;
+
+  ctx.strokeStyle = '#eab308';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(pBase.x, pBase.y);
+  ctx.lineTo(pCross.x, pCross.y);
+  ctx.moveTo(pCrossL.x, pCrossL.y);
+  ctx.lineTo(pCrossR.x, pCrossR.y);
+  ctx.moveTo(pCrossL.x, pCrossL.y);
+  ctx.lineTo(pLeft.x, pLeft.y);
+  ctx.moveTo(pCrossR.x, pCrossR.y);
+  ctx.lineTo(pRight.x, pRight.y);
+  ctx.stroke();
+}
+
+function drawBall() {
+  const p = project(ball.x, ball.y, ball.z);
+  if (!p) return;
+  const s = p.scale;
+  const shadowP = project(ball.x, 0, ball.z);
+
+  if (shadowP) {
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(shadowP.x, shadowP.y, s * 0.45, s * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(ball.spin);
+
+  ctx.fillStyle = '#9a3412';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s * 0.6, s * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#431407';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.25, 0);
+  ctx.lineTo(s * 0.25, 0);
+  ctx.stroke();
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * s * 0.09, -s * 0.08);
+    ctx.lineTo(i * s * 0.09, s * 0.08);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(t) {
+  const dt = Math.min((t - lastTime) / 1000, 0.1);
+  lastTime = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
